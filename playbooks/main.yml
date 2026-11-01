@@ -1,0 +1,313 @@
+# ==============================================================================
+# CONFIGURAÇÕES GLOBAIS (Todas as máquinas)
+# ==============================================================================
+
+- name: Configurações Básicas de SO e SSH
+  hosts: servidores
+  become: true
+  tasks:
+    - name: Atualizar o sistema operativo (update e upgrade)
+      apt:
+        update_cache: yes
+        upgrade: dist
+
+    - name: Instalar servidor NTP (Chrony) e Cliente NFS
+      apt:
+        name:
+          - chrony
+          - nfs-common
+        state: present
+
+    - name: Configurar o Chrony para usar o pool.ntp.br
+      lineinfile:
+        path: /etc/chrony/chrony.conf
+        regexp: '^pool'
+        line: "pool pool.ntp.br iburst"
+      notify: restart chrony
+
+    - name: Ajustar a zona de tempo para America/Recife
+      timezone:
+        name: America/Recife
+
+    - name: Criar o grupo ifpb
+      group:
+        name: ifpb
+        state: present
+
+    - name: Criar utilizadores (samuel e vinicius) e adicioná-los ao grupo ifpb
+      user:
+        name: "{{ item }}"
+        groups: ifpb
+        append: yes
+        shell: /bin/bash
+      loop:
+        - samuel
+        - vinicius
+
+    - name: Permitir que utilizadores do grupo ifpb tenham acesso de root usando sudo
+      copy:
+        dest: /etc/sudoers.d/ifpb
+        content: "%ifpb ALL=(ALL) NOPASSWD: ALL"
+        mode: '0440'
+
+    - name: Configurar chaves públicas SSH para os utilizadores
+      authorized_key:
+        user: "{{ item }}"
+        state: present
+        key: "{{ lookup('file', 'arquivos/' + item + '.pub') }}"
+      loop:
+        - samuel
+        - vinicius
+
+    - name: Configurar mensagem de saudação SSH (Banner)
+      copy:
+        dest: /etc/issue.net
+        content: "Acesso apenas para pessoas com autorização expressa!!!\n"
+
+    - name: Configurar restrições do servidor SSH (Chaves, Root e Grupos)
+      lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: "{{ item.regexp }}"
+        line: "{{ item.line }}"
+      loop:
+        - { regexp: '^PermitRootLogin', line: 'PermitRootLogin no' }
+        - { regexp: '^PasswordAuthentication', line: 'PasswordAuthentication no' }
+        - { regexp: '^Banner', line: 'Banner /etc/issue.net' }
+        - { regexp: '^AllowGroups', line: 'AllowGroups vagrant ifpb' }
+      notify: restart ssh
+
+  handlers:
+    - name: restart chrony
+      service:
+        name: chronyd
+        state: restarted
+
+    - name: restart ssh
+      service:
+        name: ssh
+        state: restarted
+
+
+# ==============================================================================
+# SERVIDOR DE ARQUIVOS (arq)
+# ==============================================================================
+
+- name: Configurações do Servidor de Arquivos
+  hosts: arq
+  become: true
+  tasks:
+    - name: Instalar serviços DHCP, DNS, NFS Server e LVM
+      apt:
+        name:
+          - isc-dhcp-server
+          - bind9
+          - nfs-kernel-server
+          - lvm2
+        state: present
+
+    - name: Copiar o arquivo de configuracao dhcp
+      copy:
+        src: arquivos/dhcpd.conf
+        dest: /etc/dhcp/dhcpd.conf
+        mode: '0644'
+      notify: restart dhcp
+
+    - name: Ajustar a configuracao default do dhcp para ouvir na eth1
+      lineinfile:
+        dest: /etc/default/isc-dhcp-server
+        regexp: "^INTERFACESv4"
+        line: 'INTERFACESv4="eth1"'
+      notify: restart dhcp
+
+    # -- Configuração do LVM --
+
+    - name: Criar Volume Group (VG) chamado 'dados' com os 3 discos
+      lvg:
+        vg: dados
+        pvs: /dev/sdb,/dev/sdc,/dev/sdd
+
+    - name: Criar Logical Volume (LV) chamado 'ifpb' com 15GB
+      lvol:
+        vg: dados
+        lv: ifpb
+        size: 15g
+
+    - name: Formatar o LV ifpb com ext4
+      filesystem:
+        fstype: ext4
+        dev: /dev/dados/ifpb
+
+    - name: Montar a partição automaticamente no diretório /dados
+      mount:
+        path: /dados
+        src: /dev/dados/ifpb
+        fstype: ext4
+        state: mounted
+
+    # -- Configuração do NFS --
+
+    - name: Criar utilizador nfs-ifpb e remover a shell (segurança)
+      user:
+        name: nfs-ifpb
+        shell: /bin/false
+        create_home: no
+
+    - name: Criar diretório do partilhamento NFS
+      file:
+        path: /dados/nfs
+        state: directory
+        owner: nfs-ifpb
+        group: nfs-ifpb
+        mode: '0755'
+
+    - name: Obter informações do utilizador nfs-ifpb
+      getent:
+        database: passwd
+        key: nfs-ifpb
+
+    - name: Configurar partilha no /etc/exports
+      lineinfile:
+        path: /etc/exports
+        line: "/dados/nfs 192.168.56.0/24(rw,sync,all_squash,anonuid={{ ansible_facts.getent_passwd['nfs-ifpb'][1] }},anongid={{ ansible_facts.getent_passwd['nfs-ifpb'][2] }})"
+      notify: restart nfs
+
+    # -- Configuração do DNS (bind9): opções, zona direta e zona reversa --
+
+    - name: Copiar configuração do bind9 (opções, zonas direta e reversa)
+      copy:
+        src: "arquivos/{{ item }}"
+        dest: "/etc/bind/{{ item }}"
+        owner: root
+        group: bind
+        mode: '0644'
+      loop:
+        - named.conf.options
+        - named.conf.local
+        - db.samuel.vinicius.devops
+        - db.192.168.56
+      notify: restart bind9
+
+    - name: Garantir DHCP, DNS e NFS ativos e habilitados no boot
+      service:
+        name: "{{ item }}"
+        state: started
+        enabled: yes
+      loop:
+        - isc-dhcp-server
+        - bind9
+        - nfs-kernel-server
+
+  handlers:
+    - name: restart bind9
+      service:
+        name: bind9
+        state: restarted
+
+    - name: restart nfs
+      service:
+        name: nfs-kernel-server
+        state: restarted
+
+    - name: restart dhcp
+      service:
+        name: isc-dhcp-server
+        state: restarted
+
+# ==============================================================================
+# SERVIDOR DE BANCO DE DADOS (db)
+# ==============================================================================
+
+- name: Configurações do Servidor de Banco de Dados
+  hosts: db
+  become: true
+  tasks:
+    - name: Instalar MariaDB e Autofs
+      apt:
+        name:
+          - mariadb-server
+          - autofs
+        state: present
+
+
+# ==============================================================================
+# SERVIDOR DE APLICAÇÃO (app)
+# ==============================================================================
+
+- name: Configurações do Servidor de Aplicação
+  hosts: app
+  become: true
+  tasks:
+    - name: Instalar Apache2 e Autofs
+      apt:
+        name:
+          - apache2
+          - autofs
+        state: present
+
+    - name: Transferir ficheiro index.html substituindo a página default do Apache
+      copy:
+        src: arquivos/index.html
+        dest: /var/www/html/index.html
+        owner: root
+        group: root
+        mode: '0644'
+
+
+# ==============================================================================
+# HOST CLIENTE (cli)
+# ==============================================================================
+
+- name: Configurações do Host Cliente
+  hosts: cli
+  become: true
+  tasks:
+    - name: Instalar pacotes firefox-esr, xauth e autofs
+      apt:
+        name:
+          - firefox-esr
+          - xauth
+          - autofs
+        state: present
+
+    - name: Permitir exportação da interface dos aplicativos X11
+      lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: '^X11Forwarding'
+        line: 'X11Forwarding yes'
+      notify: restart ssh_cli
+
+  handlers:
+    - name: restart ssh_cli
+      service:
+        name: ssh
+        state: restarted
+
+
+# ==============================================================================
+# AUTOFS (db, app e cli): monta /dados/nfs do arq em /var/nfs
+# ==============================================================================
+
+- name: Configuração do autofs (NFS do arq em /var/nfs)
+  hosts: db:app:cli
+  become: true
+  tasks:
+    - name: Registrar o mapa direto no auto.master
+      lineinfile:
+        path: /etc/auto.master
+        line: "/- /etc/auto.nfs --timeout=60"
+        insertbefore: '^\+auto\.master'
+      notify: restart autofs
+
+    - name: Criar o mapa do compartilhamento NFS
+      copy:
+        dest: /etc/auto.nfs
+        content: "/var/nfs -fstype=nfs,rw arq.samuel.vinicius.devops:/dados/nfs\n"
+        mode: '0644'
+      notify: restart autofs
+
+  handlers:
+    - name: restart autofs
+      service:
+        name: autofs
+        state: restarted
+        enabled: yes

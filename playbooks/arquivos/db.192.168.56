@@ -1,0 +1,7 @@
+$TTL 604800
+@   IN SOA arq.samuel.vinicius.devops. admin.samuel.vinicius.devops. (
+        1 604800 86400 2419200 604800 )
+@   IN NS  arq.samuel.vinicius.devops.
+102 IN PTR arq.samuel.vinicius.devops.
+132 IN PTR db.samuel.vinicius.devops.
+122 IN PTR app.samuel.vinicius.devops.
