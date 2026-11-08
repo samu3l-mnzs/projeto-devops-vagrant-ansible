@@ -1,0 +1,26 @@
+# ==============================================================================
+# SERVIDOR DE APLICAÇÃO (app)
+# ==============================================================================
+
+- import_playbook: comum.yml
+
+- name: Configurações do Servidor de Aplicação
+  hosts: app
+  become: true
+  tasks:
+    - name: Instalar Apache2 e Autofs
+      apt:
+        name:
+          - apache2
+          - autofs
+        state: present
+
+    - name: Transferir ficheiro index.html substituindo a página default do Apache
+      copy:
+        src: arquivos/index.html
+        dest: /var/www/html/index.html
+        owner: root
+        group: root
+        mode: '0644'
+
+- import_playbook: autofs.yml

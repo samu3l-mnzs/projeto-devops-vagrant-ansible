@@ -1,0 +1,92 @@
+# ==============================================================================
+# CONFIGURAÇÕES GLOBAIS (Todas as máquinas)
+# Importado por arq.yml, db.yml, app.yml e cli.yml
+# ==============================================================================
+
+- name: Configurações Básicas de SO e SSH
+  hosts: servidores
+  become: true
+  tasks:
+    - name: Atualizar o sistema operativo (update e upgrade)
+      apt:
+        update_cache: yes
+        upgrade: dist
+
+    - name: Instalar servidor NTP (Chrony) e Cliente NFS
+      apt:
+        name:
+          - chrony
+          - nfs-common
+        state: present
+
+    - name: Configurar o Chrony para usar o pool.ntp.br
+      lineinfile:
+        path: /etc/chrony/chrony.conf
+        regexp: '^pool'
+        line: "pool pool.ntp.br iburst"
+      notify: restart chrony
+
+    - name: Ajustar a zona de tempo para America/Recife
+      timezone:
+        name: America/Recife
+
+    - name: Criar o grupo ifpb
+      group:
+        name: ifpb
+        state: present
+
+    - name: Criar utilizadores (samuel e vinicius) e adicioná-los ao grupo ifpb
+      user:
+        name: "{{ item }}"
+        groups: ifpb
+        append: yes
+        shell: /bin/bash
+      loop:
+        - samuel
+        - vinicius
+
+    - name: Permitir que utilizadores do grupo ifpb tenham acesso de root usando sudo
+      copy:
+        dest: /etc/sudoers.d/ifpb
+        content: "%ifpb ALL=(ALL) NOPASSWD: ALL"
+        mode: '0440'
+
+    - name: Configurar chaves públicas SSH para os utilizadores
+      authorized_key:
+        user: "{{ item }}"
+        state: present
+        key: "{{ lookup('file', 'arquivos/' + item + '.pub') }}"
+      loop:
+        - samuel
+        - vinicius
+
+    - name: Configurar mensagem de saudação SSH (Banner)
+      copy:
+        dest: /etc/issue.net
+        content: "Acesso apenas para pessoas com autorização expressa!!!\n"
+
+    - name: Configurar restrições estritas do SSH (Chaves públicas apenas)
+      lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: "{{ item.regexp }}"
+        line: "{{ item.line }}"
+      loop:
+        - { regexp: '^(#\s*)?PermitRootLogin', line: 'PermitRootLogin no' }
+        - { regexp: '^(#\s*)?PasswordAuthentication', line: 'PasswordAuthentication no' }
+        - { regexp: '^(#\s*)?PubkeyAuthentication', line: 'PubkeyAuthentication yes' }
+        - { regexp: '^(#\s*)?KbdInteractiveAuthentication', line: 'KbdInteractiveAuthentication no' }
+        - { regexp: '^(#\s*)?ChallengeResponseAuthentication', line: 'ChallengeResponseAuthentication no' }
+        - { regexp: '^(#\s*)?Banner', line: 'Banner /etc/issue.net' }
+        - { regexp: '^(#\s*)?AllowGroups', line: 'AllowGroups vagrant ifpb' }
+      notify: restart ssh
+
+  handlers:
+    - name: restart chrony
+      service:
+        name: chronyd
+        state: restarted
+
+    - name: restart ssh
+      service:
+        name: ssh
+        state: restarted

@@ -1,0 +1,29 @@
+# ==============================================================================
+# AUTOFS (db, app e cli): monta /dados/nfs do arq em /var/nfs
+# Importado por db.yml, app.yml e cli.yml
+# ==============================================================================
+
+- name: Configuração do autofs (NFS do arq em /var/nfs)
+  hosts: db:app:cli
+  become: true
+  tasks:
+    - name: Registrar o mapa direto no auto.master
+      lineinfile:
+        path: /etc/auto.master
+        line: "/- /etc/auto.nfs --timeout=60"
+        insertbefore: '^\+auto\.master'
+      notify: restart autofs
+
+    - name: Criar o mapa do compartilhamento NFS
+      copy:
+        dest: /etc/auto.nfs
+        content: "/var/nfs -fstype=nfs,rw arq.samuel.vinicius.devops:/dados/nfs\n"
+        mode: '0644'
+      notify: restart autofs
+
+  handlers:
+    - name: restart autofs
+      service:
+        name: autofs
+        state: restarted
+        enabled: yes

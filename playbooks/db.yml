@@ -1,0 +1,18 @@
+# ==============================================================================
+# SERVIDOR DE BANCO DE DADOS (db)
+# ==============================================================================
+
+- import_playbook: comum.yml
+
+- name: Configurações do Servidor de Banco de Dados
+  hosts: db
+  become: true
+  tasks:
+    - name: Instalar MariaDB e Autofs
+      apt:
+        name:
+          - mariadb-server
+          - autofs
+        state: present
+
+- import_playbook: autofs.yml

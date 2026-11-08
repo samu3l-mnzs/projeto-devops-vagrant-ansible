@@ -1,0 +1,32 @@
+# ==============================================================================
+# HOST CLIENTE (cli)
+# ==============================================================================
+
+- import_playbook: comum.yml
+
+- name: Configurações do Host Cliente
+  hosts: cli
+  become: true
+  tasks:
+    - name: Instalar pacotes firefox-esr, xauth e autofs
+      apt:
+        name:
+          - firefox-esr
+          - xauth
+          - autofs
+        state: present
+
+    - name: Permitir exportação da interface dos aplicativos X11
+      lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: '^X11Forwarding'
+        line: 'X11Forwarding yes'
+      notify: restart ssh_cli
+
+  handlers:
+    - name: restart ssh_cli
+      service:
+        name: ssh
+        state: restarted
+
+- import_playbook: autofs.yml
