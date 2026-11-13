@@ -1,3 +1,4 @@
+
 # ==============================================================================
 # CONFIGURAÇÕES GLOBAIS (Todas as máquinas)
 # Importado por arq.yml, db.yml, app.yml e cli.yml
@@ -6,23 +7,88 @@
 - name: Configurações Básicas de SO e SSH
   hosts: servidores
   become: true
+
+  vars:
+    # Diretório local onde serão armazenadas as chaves SSH
+    ssh_keys_dir: "{{ playbook_dir }}/keys"
+
+    # Usuários que serão configurados
+    usuarios:
+      - samuel
+      - vinicius
+
   tasks:
-    - name: Atualizar o sistema operativo (update e upgrade)
+
+    # ==========================================================================
+    # CONFIGURAÇÃO LOCAL DAS CHAVES SSH
+    # ==========================================================================
+
+    - name: Criar diretório local para armazenar as chaves
+      file:
+        path: "{{ ssh_keys_dir }}"
+        state: directory
+        mode: '0700'
+      delegate_to: localhost
+      run_once: true
+      become: false
+
+    - name: Verificar existência das chaves SSH privadas
+      stat:
+        path: "{{ ssh_keys_dir }}/{{ item }}"
+      loop: "{{ usuarios }}"
+      register: ssh_private_keys
+      delegate_to: localhost
+      run_once: true
+      become: false
+
+    - name: Gerar pares de chaves SSH localmente
+      command: >
+        ssh-keygen -t rsa -b 2048
+        -f "{{ ssh_keys_dir }}/{{ item.item }}"
+        -N ""
+        -C "{{ item.item }}@devops"
+      args:
+        creates: "{{ ssh_keys_dir }}/{{ item.item }}"
+      loop: "{{ ssh_private_keys.results }}"
+      when: not item.stat.exists
+      delegate_to: localhost
+      run_once: true
+      become: false
+
+    - name: Garantir permissões das chaves privadas
+      file:
+        path: "{{ ssh_keys_dir }}/{{ item }}"
+        mode: '0600'
+      loop: "{{ usuarios }}"
+      delegate_to: localhost
+      run_once: true
+      become: false
+
+    # ==========================================================================
+    # ATUALIZAÇÃO E INSTALAÇÃO DE PACOTES
+    # ==========================================================================
+
+    - name: Atualizar o sistema operacional
       apt:
         update_cache: yes
         upgrade: dist
+        cache_valid_time: 3600
 
-    - name: Instalar servidor NTP (Chrony) e Cliente NFS
+    - name: Instalar Chrony e cliente NFS
       apt:
         name:
           - chrony
           - nfs-common
         state: present
 
-    - name: Configurar o Chrony para usar o pool.ntp.br
+    # ==========================================================================
+    # CONFIGURAÇÃO DE DATA E HORA
+    # ==========================================================================
+
+    - name: Configurar Chrony para utilizar o pool.ntp.br
       lineinfile:
         path: /etc/chrony/chrony.conf
-        regexp: '^pool'
+        regexp: '^pool\s+'
         line: "pool pool.ntp.br iburst"
       notify: restart chrony
 
@@ -30,63 +96,135 @@
       timezone:
         name: America/Recife
 
+    # ==========================================================================
+    # CONFIGURAÇÃO DE USUÁRIOS E GRUPOS
+    # ==========================================================================
+
     - name: Criar o grupo ifpb
       group:
         name: ifpb
         state: present
 
-    - name: Criar utilizadores (samuel e vinicius) e adicioná-los ao grupo ifpb
+    - name: Criar usuários e adicioná-los ao grupo ifpb
       user:
         name: "{{ item }}"
         groups: ifpb
         append: yes
         shell: /bin/bash
-      loop:
-        - samuel
-        - vinicius
+        state: present
+      loop: "{{ usuarios }}"
 
-    - name: Permitir que utilizadores do grupo ifpb tenham acesso de root usando sudo
+    - name: Permitir sudo sem senha para o grupo ifpb
       copy:
         dest: /etc/sudoers.d/ifpb
-        content: "%ifpb ALL=(ALL) NOPASSWD: ALL"
+        content: "%ifpb ALL=(ALL) NOPASSWD: ALL\n"
         mode: '0440'
+        validate: 'visudo -cf %s'
 
-    - name: Configurar chaves públicas SSH para os utilizadores
+    # ==========================================================================
+    # CONFIGURAÇÃO DAS CHAVES PÚBLICAS SSH
+    # ==========================================================================
+
+    - name: Verificar existência das chaves públicas SSH
+      stat:
+        path: "{{ ssh_keys_dir }}/{{ item }}.pub"
+      loop: "{{ usuarios }}"
+      register: ssh_public_keys
+      delegate_to: localhost
+      run_once: true
+      become: false
+
+    - name: Interromper caso alguma chave pública esteja ausente
+      assert:
+        that:
+          - item.stat.exists
+        fail_msg: "Chave pública ausente: {{ item.item }}.pub"
+      loop: "{{ ssh_public_keys.results }}"
+      delegate_to: localhost
+      run_once: true
+      become: false
+
+    - name: Configurar chaves públicas SSH dos usuários
       authorized_key:
         user: "{{ item }}"
         state: present
-        key: "{{ lookup('file', 'arquivos/' + item + '.pub') }}"
-      loop:
-        - samuel
-        - vinicius
+        key: "{{ lookup('file', ssh_keys_dir + '/' + item + '.pub') }}"
+      loop: "{{ usuarios }}"
 
-    - name: Configurar mensagem de saudação SSH (Banner)
+    # ==========================================================================
+    # CONFIGURAÇÃO DO BANNER SSH
+    # ==========================================================================
+
+    - name: Configurar mensagem de saudação SSH
       copy:
         dest: /etc/issue.net
-        content: "Acesso apenas para pessoas com autorização expressa!!!\n"
+        content: |
+          Acesso apenas para pessoas com autorização expressa!!!
+        mode: '0644'
 
-    - name: Configurar restrições estritas do SSH (Chaves públicas apenas)
+    # ==========================================================================
+    # CONFIGURAÇÃO DE SEGURANÇA SSH
+    # ==========================================================================
+
+    - name: Configurar restrições de acesso SSH
       lineinfile:
         path: /etc/ssh/sshd_config
         regexp: "{{ item.regexp }}"
         line: "{{ item.line }}"
+        validate: '/usr/sbin/sshd -t -f %s'
       loop:
-        - { regexp: '^(#\s*)?PermitRootLogin', line: 'PermitRootLogin no' }
-        - { regexp: '^(#\s*)?PasswordAuthentication', line: 'PasswordAuthentication no' }
-        - { regexp: '^(#\s*)?PubkeyAuthentication', line: 'PubkeyAuthentication yes' }
-        - { regexp: '^(#\s*)?KbdInteractiveAuthentication', line: 'KbdInteractiveAuthentication no' }
-        - { regexp: '^(#\s*)?ChallengeResponseAuthentication', line: 'ChallengeResponseAuthentication no' }
-        - { regexp: '^(#\s*)?Banner', line: 'Banner /etc/issue.net' }
-        - { regexp: '^(#\s*)?AllowGroups', line: 'AllowGroups vagrant ifpb' }
+        - {
+            regexp: '^(#\s*)?PermitRootLogin',
+            line: 'PermitRootLogin no'
+          }
+        - {
+            regexp: '^(#\s*)?PasswordAuthentication',
+            line: 'PasswordAuthentication no'
+          }
+        - {
+            regexp: '^(#\s*)?PubkeyAuthentication',
+            line: 'PubkeyAuthentication yes'
+          }
+        - {
+            regexp: '^(#\s*)?KbdInteractiveAuthentication',
+            line: 'KbdInteractiveAuthentication no'
+          }
+        - {
+            regexp: '^(#\s*)?ChallengeResponseAuthentication',
+            line: 'ChallengeResponseAuthentication no'
+          }
+        - {
+            regexp: '^(#\s*)?Banner',
+            line: 'Banner /etc/issue.net'
+          }
+        - {
+            regexp: '^(#\s*)?AllowGroups',
+            line: 'AllowGroups vagrant ifpb'
+          }
       notify: restart ssh
 
+    # ==========================================================================
+    # VALIDAÇÃO FINAL
+    # ==========================================================================
+
+    - name: Validar configuração final do SSH
+      command: /usr/sbin/sshd -t
+      changed_when: false
+
+  # ============================================================================
+  # HANDLERS
+  # ============================================================================
+
   handlers:
+
     - name: restart chrony
       service:
-        name: chronyd
+        name: chrony
         state: restarted
+        enabled: yes
 
     - name: restart ssh
       service:
         name: ssh
         state: restarted
+        enabled: yes

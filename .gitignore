@@ -1,13 +1,4 @@
-# Vagrant
 .vagrant/
-
-# Chaves privadas SSH
-playbooks/arquivos/samuel
-playbooks/arquivos/vinicius
-
-# Arquivos de ambiente e credenciais
-.env
-.env.*
-
-# Chaves privadas e certificados sensíveis
-*.pem
+keys/
+*.retry
+__pycache__/

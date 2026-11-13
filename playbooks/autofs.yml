@@ -7,6 +7,12 @@
   hosts: db:app:cli
   become: true
   tasks:
+    - name: Garantir que o diretório base do mapa direto exista
+      file:
+        path: /var/nfs
+        state: directory
+        mode: '0755'
+
     - name: Registrar o mapa direto no auto.master
       lineinfile:
         path: /etc/auto.master
