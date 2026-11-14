@@ -10,7 +10,7 @@
 
   vars:
     # Diretório local onde serão armazenadas as chaves SSH
-    ssh_keys_dir: "{{ playbook_dir }}/keys"
+    ssh_keys_dir: "{{ playbook_dir }}/../keys"
 
     # Usuários que serão configurados
     usuarios:
@@ -68,11 +68,18 @@
     # ATUALIZAÇÃO E INSTALAÇÃO DE PACOTES
     # ==========================================================================
 
+    - name: Pré-configurar o grub-pc para o upgrade não pedir dispositivo
+      shell: echo "grub-pc grub-pc/install_devices multiselect /dev/sda" | debconf-set-selections
+      changed_when: false
+
     - name: Atualizar o sistema operacional
       apt:
         update_cache: yes
         upgrade: dist
         cache_valid_time: 3600
+        dpkg_options: 'force-confold,force-confdef'
+      environment:
+        DEBIAN_FRONTEND: noninteractive
 
     - name: Instalar Chrony e cliente NFS
       apt:

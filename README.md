@@ -33,10 +33,13 @@ A rede é a 192.168.56.0/24, com gateway 192.168.56.1 e domínio samuel.vinicius
 
 ```
 .
+├── .gitignore
 ├── Vagrantfile
 ├── ansible.cfg
 ├── hosts.ini
 ├── README.md
+├── verifica-proj1.py
+├── keys/              (gerada pelo playbook; não vai para o GitHub)
 └── playbooks
     ├── comum.yml
     ├── autofs.yml
@@ -50,10 +53,10 @@ A rede é a 192.168.56.0/24, com gateway 192.168.56.1 e domínio samuel.vinicius
         ├── named.conf.local
         ├── db.samuel.vinicius.devops
         ├── db.192.168.56
-        ├── index.html
-        ├── samuel.pub
-        └── vinicius.pub
+        └── index.html
 ```
+
+A pasta `keys/` fica na raiz do projeto e guarda os pares de chaves SSH dos usuários `samuel` e `vinicius`. Ela é criada pelo próprio playbook na primeira execução e está no `.gitignore`, porque contém chaves privadas.
 
 ## Vagrantfile
 
@@ -61,7 +64,7 @@ Todas as VMs usam o provider VirtualBox, a box debian/bookworm64, clones vincula
 
 O arq tem IP fixo e três discos adicionais de 10 GB. O db e o app pegam IP por DHCP com o MAC fixo. O cli pega IP por DHCP sem reserva.
 
-Há um gatilho que roda antes do `vagrant up` e desabilita o servidor DHCP do VirtualBox, para que só o DHCP do arq responda na rede.
+Há um gatilho que roda antes do `vagrant up` e desabilita o servidor DHCP do VirtualBox (`vboxmanage dhcpserver modify --interface=vboxnet0 --disable`), para que só o DHCP do arq responda na rede. Se a interface `vboxnet0` ainda não existir na primeira subida, o gatilho segue sem erro (`on_error = :continue`).
 
 **Provisionamento.** Cada VM tem um provisionador `ansible` que executa o playbook dela (`playbooks/<vm>.yml`). O Vagrant gera o próprio inventário e conecta em cada VM pela interface NAT, então o provisionamento não depende de a VM já ter recebido IP na rede privada. O grupo `servidores`, usado pelos playbooks, é declarado no próprio Vagrantfile.
 
@@ -82,10 +85,11 @@ Há um playbook por VM. As tarefas repetidas ficam em dois arquivos compartilhad
 
 **comum.yml (todas as máquinas)**
 
-- Update e upgrade do sistema.
+- Geração dos pares de chaves SSH de `samuel` e `vinicius` na pasta `keys/` da máquina que roda o Vagrant. Se as chaves já existem, não são recriadas.
+- Update e upgrade do sistema. Antes do upgrade, a instalação do GRUB é pré-configurada para o disco `/dev/sda`, para o `apt` não abrir uma pergunta interativa que travaria o provisionamento.
 - Chrony configurado para usar o pool.ntp.br e fuso America/Recife.
 - Grupo ifpb e usuários samuel e vinicius dentro dele, com sudo liberado para o grupo.
-- Chaves públicas dos dois usuários instaladas.
+- Chaves públicas dos dois usuários instaladas nas VMs (`authorized_keys`).
 - SSH somente com chave pública, root bloqueado, acesso só para os grupos vagrant e ifpb e banner "Acesso apenas para pessoas com autorização expressa!!!".
 - Cliente NFS instalado.
 
@@ -115,9 +119,17 @@ Há um playbook por VM. As tarefas repetidas ficam em dois arquivos compartilhad
 ## Como executar
 
 1. Na raiz do projeto, rodar `vagrant up`. Não use `--parallel`: o arq precisa estar pronto antes das outras VMs. O Vagrant sobe cada VM e já roda o playbook dela, na ordem arq, db, app e cli.
-2. Conferir se o servidor DHCP do VirtualBox ficou desabilitado e, se não ficou, desabilitar à mão.
+2. Conferir se o servidor DHCP do VirtualBox ficou desabilitado: `VBoxManage list dhcpservers` deve mostrar `Enabled: No` para a `vboxnet0`. O gatilho do Vagrantfile já faz isso; se não ficou, rode `VBoxManage dhcpserver modify --interface=vboxnet0 --disable`.
 3. Conferir os IPs: o db deve ficar com .132 e o app com .122. O cli recebe um IP entre .50 e .100.
-4. Para reaplicar a configuração depois que as VMs já existem, usar `vagrant provision` (ou `vagrant provision <vm>`). Rodando uma segunda vez, não deve aparecer nenhuma alteração.
+4. Para acessar as VMs por nome a partir da máquina hospedeira, apontar o DNS da interface host-only para o arq (não persiste depois de reiniciar):
+
+   ```
+   sudo resolvectl dns vboxnet0 192.168.56.102
+   sudo resolvectl domain vboxnet0 '~samuel.vinicius.devops'
+   ping -c 1 db.samuel.vinicius.devops
+   ```
+
+5. Para reaplicar a configuração depois que as VMs já existem, usar `vagrant provision` (ou `vagrant provision <vm>`). Rodando uma segunda vez, não deve aparecer nenhuma alteração.
 
 ### Execução manual (opcional)
 
@@ -131,7 +143,7 @@ ansible-playbook playbooks/app.yml --limit app
 ansible-playbook playbooks/cli.yml --limit cli
 ```
 
-Nesse modo o db, o app e o cli precisam já ter recebido IP do DHCP do arq. Se o cli pegar um IP diferente de .50, ajuste o hosts.ini.
+Nesse modo o db, o app e o cli precisam já ter recebido IP do DHCP do arq, e o hospedeiro precisa resolver os nomes pelo DNS do arq (passo 4 acima). O cli não tem registro no DNS, porque o IP dele vem da faixa dinâmica; para rodar o playbook dele manualmente, troque no `hosts.ini` o nome do cli pelo IP que ele recebeu.
 
 ### Verificações sugeridas
 
