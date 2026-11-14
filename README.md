@@ -131,7 +131,7 @@ Há um playbook por VM. As tarefas repetidas ficam em dois arquivos compartilhad
 
 5. Para reaplicar a configuração depois que as VMs já existem, usar `vagrant provision` (ou `vagrant provision <vm>`). Rodando uma segunda vez, não deve aparecer nenhuma alteração.
 
-### Execução manual (opcional)
+### Execução manual 
 
 O `hosts.ini` e o `ansible.cfg` permitem rodar os playbooks sem passar pelo Vagrant. O Ansible acessa as VMs com o usuário vagrant e a chave insecure_private_key do Vagrant. Use sempre `--limit`, porque o comum.yml mira o grupo `servidores` inteiro.
 
@@ -145,7 +145,7 @@ ansible-playbook playbooks/cli.yml --limit cli
 
 Nesse modo o db, o app e o cli precisam já ter recebido IP do DHCP do arq, e o hospedeiro precisa resolver os nomes pelo DNS do arq (passo 4 acima). O cli não tem registro no DNS, porque o IP dele vem da faixa dinâmica; para rodar o playbook dele manualmente, troque no `hosts.ini` o nome do cli pelo IP que ele recebeu.
 
-### Verificações sugeridas
+### Verificações:
 
 - Resolução de nomes a partir das VMs: `vagrant ssh db -c "ping -c 1 arq.samuel.vinicius.devops"` (o mesmo vale para app e cli).
 - Resolução a partir do hospedeiro: `dig @192.168.56.102 app.samuel.vinicius.devops`.
