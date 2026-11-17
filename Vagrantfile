@@ -22,11 +22,11 @@ Vagrant.configure("2") do |config|
   end
 
   # Gatilho para desabilitar o DHCP do VirtualBox
-  config.trigger.before :up do |trigger|
-    trigger.info = "Desabilitando DHCP do VirtualBox..."
-    trigger.run = {inline: "vboxmanage dhcpserver modify --interface=vboxnet0 --disable"}
-    trigger.on_error = :continue
-  end
+  config.trigger.before :"Vagrant::Action::Builtin::WaitForCommunicator", type: :action do |t|
+    t.warn = "Iterrompe o servidor dhcp do virtualbox" 
+    t.run = {inline: "vboxmanage dhcpserver stop --interface vboxnet0"}
+  end 
+
 
   # Servidor de Arquivos (arq)
   # Precisa ser o primeiro: o DHCP/DNS dele atende as outras VMs.
