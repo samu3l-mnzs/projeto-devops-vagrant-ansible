@@ -57,14 +57,11 @@
         state: mounted
 
     # -- Configuração do NFS --
+    # O usuário nfs-ifpb e o getent agora vêm do comum.yml.
 
-    - name: Criar utilizador nfs-ifpb e remover a shell (segurança)
-      user:
-        name: nfs-ifpb
-        shell: /bin/false
-        create_home: no
-
-    - name: Criar diretório do partilhamento NFS
+    - name: Garantir /dados/nfs dentro do LV já montado
+      # O comum.yml roda antes do LVM ser montado em /dados; sem esta tarefa
+      # o diretório criado lá ficaria escondido sob o ponto de montagem.
       file:
         path: /dados/nfs
         state: directory
@@ -72,16 +69,27 @@
         group: nfs-ifpb
         mode: '0755'
 
-    - name: Obter informações do utilizador nfs-ifpb
-      getent:
-        database: passwd
-        key: nfs-ifpb
-
     - name: Configurar partilha no /etc/exports
       lineinfile:
         path: /etc/exports
         line: "/dados/nfs 192.168.56.0/24(rw,sync,all_squash,anonuid={{ ansible_facts.getent_passwd['nfs-ifpb'][1] }},anongid={{ ansible_facts.getent_passwd['nfs-ifpb'][2] }})"
       notify: restart nfs
+
+    # -- Mesmo caminho do compartilhamento (/var/nfs) também no arq --
+
+    - name: Criar o diretório /var/nfs no arq
+      file:
+        path: /var/nfs
+        state: directory
+        mode: '0755'
+
+    - name: Montar /dados/nfs em /var/nfs (bind) para o arq ter o mesmo caminho das demais VMs
+      mount:
+        path: /var/nfs
+        src: /dados/nfs
+        fstype: none
+        opts: bind
+        state: mounted
 
     # -- Configuração do DNS (bind9): opções, zona direta e zona reversa --
 

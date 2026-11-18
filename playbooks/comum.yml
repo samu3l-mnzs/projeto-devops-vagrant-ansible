@@ -121,6 +121,31 @@
         state: present
       loop: "{{ usuarios }}"
 
+    # ==========================================================================
+    # USUÁRIO E DIRETÓRIO DO COMPARTILHAMENTO NFS (todas as VMs)
+    # Fica logo após a criação dos usuários e do grupo para que o nfs-ifpb
+    # receba sempre o mesmo UID/GID (1003/1004) em todas as máquinas.
+    # ==========================================================================
+
+    - name: Criar utilizador nfs-ifpb e remover a shell (segurança)
+      user:
+        name: nfs-ifpb
+        shell: /bin/false
+        create_home: no
+
+    - name: Criar diretório do partilhamento NFS
+      file:
+        path: /dados/nfs
+        state: directory
+        owner: nfs-ifpb
+        group: nfs-ifpb
+        mode: '0755'
+
+    - name: Obter informações do utilizador nfs-ifpb
+      getent:
+        database: passwd
+        key: nfs-ifpb
+
     - name: Permitir sudo sem senha para o grupo ifpb
       copy:
         dest: /etc/sudoers.d/ifpb
